@@ -30,6 +30,33 @@
 
   <script>
     const sessionId = 'WBC-' + Math.random().toString(36).substr(2,5).toUpperCase();
+    const history = [];
+
+async function sendMessage() {
+  const input = document.getElementById('input');
+  const message = input.value.trim();
+  if (!message) return;
+  addMessage('user', message);
+  input.value = '';
+  addTyping();
+
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sessionId, message, history})
+    });
+    const data = await res.json();
+    document.getElementById('typing')?.remove();
+    addMessage('bot', data.reply);
+    history.push({sender: 'user', text: message});
+    history.push({sender: 'bot', text: data.reply});
+  } catch(err) {
+    document.getElementById('typing')?.remove();
+    addMessage('bot', 'Sorry, something went wrong. Please try again.');
+  }
+}
+
     document.getElementById('session-label').textContent = 'Session: ' + sessionId + ' — save this to return later';
 
     window.onload = () => addMessage('bot', "Hello, I'm here to help you through the process of managing a loved one's Westpac accounts. I'm so sorry for your loss. Whenever you're ready, could you tell me the full name of the person who has passed away?");
