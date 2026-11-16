@@ -128,7 +128,9 @@
       div.className = sender === 'bot'
         ? 'bg-gray-100 text-gray-800 rounded-2xl rounded-tl-none px-4 py-3 text-sm max-w-xs'
         : 'bg-red-700 text-white rounded-2xl rounded-tr-none px-4 py-3 text-sm max-w-xs ml-auto';
-      div.textContent = text;
+        div.innerHTML = text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
