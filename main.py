@@ -40,6 +40,8 @@ RULES:
 - Be warm and gentle, the person is grieving
 - Never say 'case', 'account holder', 'deceased customer'
 - Use the person's name once you know it
+- Only express condolences ONCE at the very start, never repeat it in later messages
+- Keep responses short and focused — one question, no filler
 
 COLLECT IN THIS ORDER:
 1. Deceased's full name
@@ -82,14 +84,18 @@ def resume_session(code):
 
 
 def build_contents(history, message):
-    """Turn stored history + the new message into a prompt for Gemini."""
-    lines = [SYSTEM_PROMPT, '']
+    """Build Gemini's role-structured contents from stored history + new message."""
+    contents = [
+        {'role': 'user', 'parts': [{'text': SYSTEM_PROMPT}]},
+        {'role': 'model', 'parts': [{'text': 'Understood. I will follow these guidelines.'}]},
+    ]
     for m in history:
-        who = 'User' if m['role'] == 'user' else 'Assistant'
-        lines.append(f"{who}: {m['content']}")
-    lines.append(f"User: {message}")
-    lines.append("Assistant:")
-    return '\n'.join(lines)
+        contents.append({
+            'role': 'user' if m['role'] == 'user' else 'model',
+            'parts': [{'text': m['content']}],
+        })
+    contents.append({'role': 'user', 'parts': [{'text': message}]})
+    return contents
 
 
 @app.route('/chat', methods=['POST'])
@@ -104,7 +110,7 @@ def chat():
         return jsonify({'error': 'empty message'}), 400
 
     svc.ensure_session(code)
-    history = svc.get_history(code)
+    history = svc.get_history(code)  # server-side history from the DB
 
     svc.add_message(code, 'user', message)
 

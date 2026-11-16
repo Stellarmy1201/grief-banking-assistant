@@ -7,32 +7,119 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col items-center justify-center p-4">
-  <div class="w-full max-w-lg bg-white rounded-2xl shadow-lg flex flex-col" style="height:90vh">
 
+  <!-- SCREEN 1: GATE -->
+  <div id="gate" class="w-full max-w-lg bg-white rounded-2xl shadow-lg p-8 flex-col items-center text-center space-y-6" style="display:none">
+    <div class="bg-red-700 text-white rounded-xl px-6 py-4 w-full">
+      <h1 class="text-lg font-semibold">Westpac Bereavement Support</h1>
+      <p class="text-sm text-red-200">We're here to help you through this</p>
+    </div>
+    <p class="text-gray-600 text-sm">Have you used this service before?</p>
+    <div class="space-y-3 w-full">
+      <button onclick="startNew()" class="w-full bg-red-700 text-white py-3 rounded-xl font-medium hover:bg-red-800">
+        Start a new conversation
+      </button>
+      <div class="flex gap-2">
+        <input id="resume-input" type="text" placeholder="Enter your session code e.g. WBC-LZBYD"
+          class="flex-1 border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-600" />
+        <button onclick="resumeSession()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm hover:bg-gray-300">
+          Resume
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 2: SHOW CODE -->
+  <div id="code-screen" class="w-full max-w-lg bg-white rounded-2xl shadow-lg p-8 flex-col items-center text-center space-y-6" style="display:none">
+    <div class="bg-red-700 text-white rounded-xl px-6 py-4 w-full">
+      <h1 class="text-lg font-semibold">Westpac Bereavement Support</h1>
+    </div>
+    <h2 class="text-lg font-semibold text-gray-800">Your Session Code</h2>
+    <div class="bg-gray-100 rounded-xl px-8 py-6 w-full">
+      <p id="new-code" class="text-3xl font-mono font-bold text-red-700 tracking-widest"></p>
+    </div>
+    <p class="text-gray-500 text-sm">Write this down or screenshot it. You can use it to return to this conversation later.</p>
+    <button onclick="confirmCode()" class="w-full bg-red-700 text-white py-3 rounded-xl font-medium hover:bg-red-800">
+      I've saved my code — continue
+    </button>
+  </div>
+
+  <!-- SCREEN 3: CHAT -->
+  <div id="chatbox" class="w-full max-w-lg bg-white rounded-2xl shadow-lg flex-col" style="height:90vh; display:none">
     <div class="bg-red-700 text-white rounded-t-2xl px-6 py-4">
       <h1 class="text-lg font-semibold">Westpac Bereavement Support</h1>
-      <p id="session-label" class="text-sm text-red-200">We're here to help you through this</p>
+      <p id="session-label" class="text-sm text-red-200"></p>
     </div>
-
     <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
-
     <div class="border-t p-4 flex gap-2">
-      <input id="input" type="text"
-        placeholder="Type your message..."
+      <input id="input" type="text" placeholder="Type your message..."
         class="flex-1 border rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-600"
         onkeydown="if(event.key==='Enter') sendMessage()" />
-      <button onclick="sendMessage()"
-        class="bg-red-700 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-800">
+      <button onclick="sendMessage()" class="bg-red-700 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-800">
         Send
       </button>
     </div>
   </div>
 
   <script>
-    const sessionId = 'WBC-' + Math.random().toString(36).substr(2,5).toUpperCase();
-    document.getElementById('session-label').textContent = 'Session: ' + sessionId + ' — save this to return later';
+    let sessionId = '';
+    let history = [];
 
-    window.onload = () => addMessage('bot', "Hello, I'm here to help you through the process of managing a loved one's Westpac accounts. I'm so sorry for your loss. Whenever you're ready, could you tell me the full name of the person who has passed away?");
+    window.onload = () => {
+      document.getElementById('gate').style.display = 'flex';
+    };
+
+    async function startNew() {
+      try {
+        const res = await fetch('/session', { method: 'POST' });
+        const data = await res.json();
+        sessionId = data.sessionId;
+      } catch (err) {
+        alert('Could not start a session. Please try again.');
+        return;
+      }
+      document.getElementById('new-code').textContent = sessionId;
+      document.getElementById('gate').style.display = 'none';
+      document.getElementById('code-screen').style.display = 'flex';
+    }
+
+    function confirmCode() {
+      document.getElementById('code-screen').style.display = 'none';
+      startChat();
+    }
+
+    async function resumeSession() {
+      const code = document.getElementById('resume-input').value.trim().toUpperCase();
+      if (!code.startsWith('WBC-') || code.length < 8) {
+        alert('Please enter a valid session code (e.g. WBC-LZBYD)');
+        return;
+      }
+      let data;
+      try {
+        const res = await fetch('/session/' + encodeURIComponent(code));
+        if (res.status === 404) { alert('No conversation found for that code.'); return; }
+        data = await res.json();
+      } catch (err) {
+        alert('Could not resume. Please try again.');
+        return;
+      }
+      sessionId = data.sessionId;
+      history = (data.history || []).map(m => ({
+        sender: m.role === 'user' ? 'user' : 'bot', text: m.content
+      }));
+      document.getElementById('gate').style.display = 'none';
+      startChat({ resumed: true });
+    }
+
+    function startChat(opts = {}) {
+      document.getElementById('chatbox').style.display = 'flex';
+      document.getElementById('session-label').textContent = 'Session: ' + sessionId;
+      if (opts.resumed && history.length) {
+        history.forEach(m => addMessage(m.sender, m.text));
+      } else {
+        addMessage('bot', "Hello, I'm here to help you through the process of managing a loved one's Westpac accounts. I'm so sorry for your loss. Whenever you're ready, could you tell me the full name of the person who has passed away?");
+      }
+    }
 
     function addMessage(sender, text) {
       const chat = document.getElementById('chat');
@@ -51,6 +138,7 @@
       div.className = 'bg-gray-100 text-gray-400 rounded-2xl rounded-tl-none px-4 py-3 text-sm max-w-xs italic';
       div.textContent = 'typing...';
       document.getElementById('chat').appendChild(div);
+      document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
     }
 
     async function sendMessage() {
@@ -64,11 +152,13 @@
         const res = await fetch('/chat', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({sessionId, message})
+          body: JSON.stringify({sessionId, message, history})
         });
         const data = await res.json();
         document.getElementById('typing')?.remove();
         addMessage('bot', data.reply);
+        history.push({sender: 'user', text: message});
+        history.push({sender: 'bot', text: data.reply});
       } catch(err) {
         document.getElementById('typing')?.remove();
         addMessage('bot', 'Sorry, something went wrong. Please try again.');
