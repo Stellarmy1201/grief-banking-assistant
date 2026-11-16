@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from flask import Flask, request, jsonify, send_from_directory
 from google import genai
 
@@ -38,7 +40,7 @@ def chat():
     data = request.json
     message = data.get('message', '')
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-3.8-flash',
         contents=SYSTEM_PROMPT + '\n\nUser: ' + message
     )
     return jsonify({'reply': response.text})
