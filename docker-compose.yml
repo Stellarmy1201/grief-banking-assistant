@@ -24,6 +24,8 @@ services:
     environment:
       FLASK_APP: main
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: ${DB_USER:-grief}
