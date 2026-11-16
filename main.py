@@ -40,10 +40,24 @@ def index():
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.json
+    session_id = data.get('sessionId', 'default')
     message = data.get('message', '')
+    history = data.get('history', [])
+
+    contents = [{'role': 'user', 'parts': [{'text': SYSTEM_PROMPT}]},
+                {'role': 'model', 'parts': [{'text': 'Understood. I will follow these guidelines.'}]}]
+    
+    for msg in history:
+        contents.append({
+            'role': 'user' if msg['sender'] == 'user' else 'model',
+            'parts': [{'text': msg['text']}]
+        })
+    
+    contents.append({'role': 'user', 'parts': [{'text': message}]})
+
     response = client.models.generate_content(
         model='gemini-3.8-flash',
-        contents=SYSTEM_PROMPT + '\n\nUser: ' + message
+        contents=contents
     )
     return jsonify({'reply': response.text})
 
