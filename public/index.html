@@ -63,7 +63,6 @@
 
   <script>
     let sessionId = '';
-    let history = [];
 
     window.onload = () => {
       document.getElementById('gate').style.display = 'flex';
@@ -72,7 +71,9 @@
     async function startNew() {
       try {
         const res = await fetch('/session', { method: 'POST' });
+        if (!res.ok) throw new Error('bad status');
         const data = await res.json();
+        if (!data.sessionId) throw new Error('no session id');
         sessionId = data.sessionId;
       } catch (err) {
         alert('Could not start a session. Please try again.');
@@ -104,18 +105,18 @@
         return;
       }
       sessionId = data.sessionId;
-      history = (data.history || []).map(m => ({
+      const msgs = (data.history || []).map(m => ({
         sender: m.role === 'user' ? 'user' : 'bot', text: m.content
       }));
       document.getElementById('gate').style.display = 'none';
-      startChat({ resumed: true });
+      startChat({ messages: msgs });
     }
 
     function startChat(opts = {}) {
       document.getElementById('chatbox').style.display = 'flex';
       document.getElementById('session-label').textContent = 'Session: ' + sessionId;
-      if (opts.resumed && history.length) {
-        history.forEach(m => addMessage(m.sender, m.text));
+      if (opts.messages && opts.messages.length) {
+        opts.messages.forEach(m => addMessage(m.sender, m.text));
       } else {
         addMessage('bot', "Hello, I'm here to help you through the process of managing a loved one's Westpac accounts. I'm so sorry for your loss. Whenever you're ready, could you tell me the full name of the person who has passed away?");
       }
@@ -152,13 +153,11 @@
         const res = await fetch('/chat', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({sessionId, message, history})
+          body: JSON.stringify({sessionId, message})
         });
         const data = await res.json();
         document.getElementById('typing')?.remove();
         addMessage('bot', data.reply);
-        history.push({sender: 'user', text: message});
-        history.push({sender: 'bot', text: data.reply});
       } catch(err) {
         document.getElementById('typing')?.remove();
         addMessage('bot', 'Sorry, something went wrong. Please try again.');

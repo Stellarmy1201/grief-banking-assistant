@@ -62,11 +62,19 @@ def index():
     return send_from_directory('public', 'index.html')
 
 
+GREETING = ("Hello, I'm here to help you through the process of managing a loved "
+            "one's Westpac accounts. I'm so sorry for your loss. Whenever you're "
+            "ready, could you tell me the full name of the person who has passed away?")
+
+
 @app.route('/session', methods=['POST'])
 def new_session():
     """Start a new conversation: mint a unique random id to continue later."""
     code = svc.create_session()
-    return jsonify({'sessionId': code})
+    # Persist the opening greeting so the model sees it in history and does not
+    # repeat its condolences on the first reply.
+    svc.add_message(code, 'assistant', GREETING)
+    return jsonify({'sessionId': code, 'greeting': GREETING})
 
 
 @app.route('/session/<code>', methods=['GET'])
@@ -127,7 +135,7 @@ def chat():
             # Gemini can return transient 503s under load. Keep the DB
             # consistent and let the user retry instead of crashing.
             reply = ("I'm sorry, I'm having trouble responding right now. "
-                     "Your message was saved — please try again in a moment.")
+                     "Your message was saved. Please try again in a moment.")
 
     svc.add_message(code, 'assistant', reply)
     return jsonify({'reply': reply})
