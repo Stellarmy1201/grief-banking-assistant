@@ -1,0 +1,40 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpw}
+      MYSQL_DATABASE: ${DB_NAME:-grief_assistant}
+      MYSQL_USER: ${DB_USER:-grief}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-griefpw}
+    ports:
+      # Host 3307 avoids clashing with your Sail MySQL on 3306.
+      - "3307:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${DB_ROOT_PASSWORD:-rootpw}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      FLASK_APP: main
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-grief}
+      DB_PASSWORD: ${DB_PASSWORD:-griefpw}
+      DB_NAME: ${DB_NAME:-grief_assistant}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Live code mount so edits reflect without a rebuild (Flask debug reloads).
+      - .:/app
+
+volumes:
+  dbdata:

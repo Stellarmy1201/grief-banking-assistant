@@ -1,0 +1,7 @@
+Flask
+python-dotenv
+google-genai
+PyMySQL
+cryptography
+Flask-SQLAlchemy
+Flask-Migrate

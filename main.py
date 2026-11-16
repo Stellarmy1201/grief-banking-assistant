@@ -3,9 +3,35 @@ from dotenv import load_dotenv
 load_dotenv()
 from flask import Flask, request, jsonify, send_from_directory
 from google import genai
+from google.genai import types
+
+from extensions import db, migrate
+import models  # noqa: F401  (import so migrations see the models' metadata)
+import services as svc
+
+
+def _database_uri():
+    user = os.environ.get('DB_USER', 'grief')
+    password = os.environ.get('DB_PASSWORD', 'griefpw')
+    host = os.environ.get('DB_HOST', '127.0.0.1')
+    port = os.environ.get('DB_PORT', '3306')
+    name = os.environ.get('DB_NAME', 'grief_assistant')
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"
+
 
 app = Flask(__name__, static_folder='public')
-client = genai.Client(api_key=os.environ['GEMINI_API_KEY'])
+app.config['SQLALCHEMY_DATABASE_URI'] = _database_uri()
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db.init_app(app)
+migrate.init_app(app, db)
+
+# Boot even without a key so the DB layer stays usable; /chat reports it.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+client = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options=types.HttpOptions(timeout=20000),  # ms; fail fast if overloaded
+) if GEMINI_API_KEY else None
 
 SYSTEM_PROMPT = """You are a compassionate assistant for Westpac Bank, helping bereaved families close a deceased person's bank accounts.
 
@@ -29,21 +55,76 @@ WHEN DONE, output [SUMMARY] then list:
 - Timeline: sole accounts 2-4 weeks, joint accounts sooner
 - Always add: for legal advice, speak with a solicitor"""
 
-chat_sessions = {}
-
 @app.route('/')
 def index():
     return send_from_directory('public', 'index.html')
 
+
+@app.route('/session', methods=['POST'])
+def new_session():
+    """Start a new conversation: mint a unique random id to continue later."""
+    code = svc.create_session()
+    return jsonify({'sessionId': code})
+
+
+@app.route('/session/<code>', methods=['GET'])
+def resume_session(code):
+    """Resume a conversation by its random id. 404 if the code is unknown."""
+    session = svc.get_session(code)
+    if session is None:
+        return jsonify({'exists': False, 'history': []}), 404
+    return jsonify({
+        'exists': True,
+        'sessionId': code,
+        'history': svc.get_history(code),
+        'collected': session['collected'],
+    })
+
+
+def build_contents(history, message):
+    """Turn stored history + the new message into a prompt for Gemini."""
+    lines = [SYSTEM_PROMPT, '']
+    for m in history:
+        who = 'User' if m['role'] == 'user' else 'Assistant'
+        lines.append(f"{who}: {m['content']}")
+    lines.append(f"User: {message}")
+    lines.append("Assistant:")
+    return '\n'.join(lines)
+
+
 @app.route('/chat', methods=['POST'])
 def chat():
-    data = request.json
-    message = data.get('message', '')
-    response = client.models.generate_content(
-        model='gemini-3.8-flash',
-        contents=SYSTEM_PROMPT + '\n\nUser: ' + message
-    )
-    return jsonify({'reply': response.text})
+    data = request.json or {}
+    message = (data.get('message') or '').strip()
+    code = (data.get('sessionId') or '').strip()
+
+    if not code:
+        return jsonify({'error': 'missing sessionId'}), 400
+    if not message:
+        return jsonify({'error': 'empty message'}), 400
+
+    svc.ensure_session(code)
+    history = svc.get_history(code)
+
+    svc.add_message(code, 'user', message)
+
+    if client is None:
+        reply = "[AI offline: set GEMINI_API_KEY to enable responses. Your message was saved.]"
+    else:
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=build_contents(history, message),
+            )
+            reply = response.text
+        except Exception:
+            # Gemini can return transient 503s under load. Keep the DB
+            # consistent and let the user retry instead of crashing.
+            reply = ("I'm sorry, I'm having trouble responding right now. "
+                     "Your message was saved — please try again in a moment.")
+
+    svc.add_message(code, 'assistant', reply)
+    return jsonify({'reply': reply})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True, threaded=True)
