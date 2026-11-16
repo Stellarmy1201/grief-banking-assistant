@@ -46,9 +46,14 @@
 
   <!-- SCREEN 3: CHAT -->
   <div id="chatbox" class="w-full max-w-lg bg-white rounded-2xl shadow-lg flex-col" style="height:90vh; display:none">
-    <div class="bg-red-700 text-white rounded-t-2xl px-6 py-4">
-      <h1 class="text-lg font-semibold">Westpac Bereavement Support</h1>
-      <p id="session-label" class="text-sm text-red-200"></p>
+    <div class="bg-red-700 text-white rounded-t-2xl px-6 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-lg font-semibold">Westpac Bereavement Support</h1>
+        <p id="session-label" class="text-sm text-red-200"></p>
+      </div>
+      <button onclick="openBooking()" class="bg-white text-red-700 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-red-50">
+        Book an appointment
+      </button>
     </div>
     <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
     <div class="border-t p-4 flex gap-2">
@@ -58,6 +63,48 @@
       <button onclick="sendMessage()" class="bg-red-700 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-800">
         Send
       </button>
+    </div>
+  </div>
+
+  <!-- BOOKING PANEL (overlay) -->
+  <div id="booking" class="fixed inset-0 bg-black/40 items-center justify-center p-4" style="display:none">
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-base font-semibold text-gray-800">Book an appointment</h2>
+        <button onclick="closeBooking()" class="text-gray-400 hover:text-gray-700">✕</button>
+      </div>
+      <p class="text-sm text-gray-500">Our estate team can meet you at a branch. Choose a branch and time.</p>
+
+      <label class="block text-sm text-gray-700">Branch
+        <select id="branch-select" onchange="loadSlots()"
+          class="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+          <option value="">Select a branch…</option>
+        </select>
+      </label>
+
+      <div>
+        <p class="text-sm text-gray-700 mb-1">Available times</p>
+        <div id="slot-list" class="space-y-2 max-h-48 overflow-y-auto text-sm text-gray-500">
+          Select a branch first.
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <input id="contact-name" placeholder="Your name"
+          class="border rounded-lg px-3 py-2 text-sm" />
+        <input id="contact-phone" placeholder="Phone (optional)"
+          class="border rounded-lg px-3 py-2 text-sm" />
+      </div>
+
+      <p id="booking-error" class="text-sm text-red-700" style="display:none"></p>
+
+      <div class="flex gap-2">
+        <button onclick="closeBooking()" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-300">Cancel</button>
+        <button id="confirm-booking" onclick="confirmBooking()" disabled
+          class="flex-1 bg-red-700 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-800 disabled:opacity-40">
+          Confirm booking
+        </button>
+      </div>
     </div>
   </div>
 
@@ -109,7 +156,7 @@
         sender: m.role === 'user' ? 'user' : 'bot', text: m.content
       }));
       document.getElementById('gate').style.display = 'none';
-      startChat({ messages: msgs });
+      startChat({ messages: msgs, appointment: data.appointment });
     }
 
     function startChat(opts = {}) {
@@ -120,6 +167,26 @@
       } else {
         addMessage('bot', "Hello, I'm here to help you through the process of managing a loved one's Westpac accounts. I'm so sorry for your loss. Whenever you're ready, could you tell me the full name of the person who has passed away?");
       }
+      if (opts.appointment) addBookingCard(opts.appointment);
+    }
+
+    function addBookingCard(appt) {
+      const chat = document.getElementById('chat');
+      const div = document.createElement('div');
+      div.className = 'bg-green-50 border border-green-200 text-green-900 rounded-2xl px-4 py-3 text-sm';
+      const title = document.createElement('div');
+      title.className = 'font-semibold mb-1';
+      title.textContent = 'Appointment booked';
+      const where = document.createElement('div');
+      where.textContent = appt.branch + (appt.suburb ? ', ' + appt.suburb : '');
+      const when = document.createElement('div');
+      when.textContent = appt.label;
+      const ref = document.createElement('div');
+      ref.className = 'text-green-700 text-xs mt-1';
+      ref.textContent = 'Reference ' + appt.reference;
+      div.append(title, where, when, ref);
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
     }
 
     function addMessage(sender, text) {
@@ -163,6 +230,94 @@
       } catch(err) {
         document.getElementById('typing')?.remove();
         addMessage('bot', 'Sorry, something went wrong. Please try again.');
+      }
+    }
+
+    // --- Booking panel ---
+    let selectedSlotId = null;
+
+    async function openBooking() {
+      selectedSlotId = null;
+      document.getElementById('booking-error').style.display = 'none';
+      document.getElementById('confirm-booking').disabled = true;
+      document.getElementById('slot-list').innerHTML = 'Select a branch first.';
+      const sel = document.getElementById('branch-select');
+      sel.innerHTML = '<option value="">Select a branch…</option>';
+      try {
+        const branches = await (await fetch('/branches')).json();
+        branches.forEach(b => {
+          const o = document.createElement('option');
+          o.value = b.id;
+          o.textContent = b.name + (b.suburb ? ' (' + b.suburb + ')' : '');
+          sel.appendChild(o);
+        });
+      } catch (err) {
+        document.getElementById('slot-list').textContent = 'Could not load branches.';
+      }
+      document.getElementById('booking').style.display = 'flex';
+    }
+
+    function closeBooking() {
+      document.getElementById('booking').style.display = 'none';
+    }
+
+    async function loadSlots() {
+      selectedSlotId = null;
+      document.getElementById('confirm-booking').disabled = true;
+      const branchId = document.getElementById('branch-select').value;
+      const list = document.getElementById('slot-list');
+      if (!branchId) { list.innerHTML = 'Select a branch first.'; return; }
+      list.innerHTML = 'Loading…';
+      let slots;
+      try {
+        slots = await (await fetch('/branches/' + branchId + '/slots')).json();
+      } catch (err) { list.innerHTML = 'Could not load times.'; return; }
+      if (!slots.length) { list.innerHTML = '<span class="text-gray-400">No available times at this branch.</span>'; return; }
+      list.innerHTML = '';
+      slots.forEach(s => {
+        const b = document.createElement('button');
+        b.textContent = s.label;
+        b.className = 'slot-btn w-full text-left border rounded-lg px-3 py-2 hover:border-red-600';
+        b.onclick = () => {
+          selectedSlotId = s.id;
+          document.querySelectorAll('.slot-btn').forEach(x => x.classList.remove('border-red-600','bg-red-50'));
+          b.classList.add('border-red-600','bg-red-50');
+          document.getElementById('confirm-booking').disabled = false;
+        };
+        list.appendChild(b);
+      });
+    }
+
+    async function confirmBooking() {
+      if (!selectedSlotId) return;
+      const err = document.getElementById('booking-error');
+      err.style.display = 'none';
+      const btn = document.getElementById('confirm-booking');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/appointments', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            sessionId,
+            slotId: selectedSlotId,
+            contactName: document.getElementById('contact-name').value,
+            contactPhone: document.getElementById('contact-phone').value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          err.textContent = data.error || 'Could not book that time.';
+          err.style.display = 'block';
+          btn.disabled = false;
+          return;
+        }
+        closeBooking();
+        addBookingCard(data);
+      } catch (e) {
+        err.textContent = 'Something went wrong. Please try again.';
+        err.style.display = 'block';
+        btn.disabled = false;
       }
     }
   </script>
