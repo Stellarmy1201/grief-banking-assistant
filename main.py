@@ -1,7 +1,10 @@
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
-from flask import Flask, request, jsonify, send_from_directory
+from flask import (Flask, request, jsonify, send_from_directory,
+                   render_template, redirect, url_for, session as login_session,
+                   flash)
 from google import genai
 from google.genai import types
 
@@ -22,6 +25,9 @@ def _database_uri():
 app = Flask(__name__, static_folder='public')
 app.config['SQLALCHEMY_DATABASE_URI'] = _database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
+
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin')
 
 db.init_app(app)
 migrate.init_app(app, db)
@@ -89,6 +95,7 @@ WHEN DONE, output [SUMMARY] then list:
 
 **Important:** For legal advice about the estate, please speak with a solicitor."""
 
+
 @app.route('/')
 def index():
     return send_from_directory('public', 'index.html')
@@ -120,6 +127,7 @@ def resume_session(code):
         'sessionId': code,
         'history': svc.get_history(code),
         'collected': session['collected'],
+        'appointment': svc.get_appointment_for_session(code),
     })
 
 
@@ -172,5 +180,138 @@ def chat():
     svc.add_message(code, 'assistant', reply)
     return jsonify({'reply': reply})
 
+
+# --- Booking (public, used by the chat booking panel) ------------------------
+
+@app.route('/branches', methods=['GET'])
+def branches():
+    return jsonify(svc.list_branches())
+
+
+@app.route('/branches/<int:branch_id>/slots', methods=['GET'])
+def branch_slots(branch_id):
+    return jsonify(svc.list_available_slots(branch_id))
+
+
+@app.route('/appointments', methods=['POST'])
+def create_appointment():
+    data = request.json or {}
+    code = (data.get('sessionId') or '').strip()
+    slot_id = data.get('slotId')
+    if not code:
+        return jsonify({'error': 'missing sessionId'}), 400
+    if not slot_id:
+        return jsonify({'error': 'missing slotId'}), 400
+
+    svc.ensure_session(code)
+    appt = svc.book_appointment(
+        code, slot_id, data.get('contactName'), data.get('contactPhone')
+    )
+    if appt is None:
+        return jsonify({'error': 'That time was just taken. Please pick another.'}), 409
+    return jsonify(appt)
+
+
+# --- Admin (password-gated) --------------------------------------------------
+
+@app.before_request
+def guard_admin():
+    path = request.path
+    if path.startswith('/admin') and path != '/admin/login':
+        if not login_session.get('is_admin'):
+            return redirect(url_for('admin_login'))
+
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        if request.form.get('password') == ADMIN_PASSWORD:
+            login_session['is_admin'] = True
+            return redirect(url_for('admin_dashboard'))
+        flash('Incorrect password.')
+    return render_template('admin/login.html')
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    login_session.pop('is_admin', None)
+    return redirect(url_for('admin_login'))
+
+
+@app.route('/admin')
+def admin_dashboard():
+    return render_template(
+        'admin/dashboard.html',
+        sessions=svc.list_sessions(),
+        appointments=svc.list_appointments(),
+        branches=svc.list_branches_with_slots(),
+        conversation=None,
+    )
+
+
+@app.route('/admin/conversations/<code>')
+def admin_conversation(code):
+    return render_template(
+        'admin/dashboard.html',
+        sessions=svc.list_sessions(),
+        appointments=svc.list_appointments(),
+        branches=svc.list_branches_with_slots(),
+        conversation={'code': code, 'history': svc.get_history(code)},
+    )
+
+
+@app.route('/admin/branches', methods=['POST'])
+def admin_add_branch():
+    name = (request.form.get('name') or '').strip()
+    if name:
+        svc.create_branch(name, request.form.get('suburb'))
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/branches/<int:branch_id>/delete', methods=['POST'])
+def admin_delete_branch(branch_id):
+    if not svc.delete_branch(branch_id):
+        flash('Cannot delete a branch with appointments. Cancel them first.')
+    return redirect(url_for('admin_dashboard'))
+
+
+def _parse_local_datetime(value):
+    """Parse an HTML datetime-local value, with or without seconds."""
+    for fmt in ('%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S'):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+@app.route('/admin/slots', methods=['POST'])
+def admin_add_slot():
+    branch_id = request.form.get('branch_id')
+    start = (request.form.get('start_time') or '').strip()
+    if branch_id and start:
+        dt = _parse_local_datetime(start)
+        if dt is None:
+            flash('Could not read that date/time.')
+        else:
+            svc.add_slot(int(branch_id), dt)
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/slots/<int:slot_id>/delete', methods=['POST'])
+def admin_delete_slot(slot_id):
+    if not svc.delete_slot(slot_id):
+        flash('Cannot delete a slot that has an appointment. Cancel it first.')
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/appointments/<int:appt_id>/cancel', methods=['POST'])
+def admin_cancel_appointment(appt_id):
+    svc.cancel_appointment(appt_id)
+    return redirect(url_for('admin_dashboard'))
+
+
 if __name__ == '__main__':
+    with app.app_context():
+        svc.seed_demo_data()
     app.run(host='0.0.0.0', port=8080, debug=True, threaded=True)
