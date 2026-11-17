@@ -81,6 +81,7 @@ class Appointment(db.Model):
     )
     contact_name = db.Column(db.String(120), nullable=False, default="")
     contact_phone = db.Column(db.String(40), nullable=False, default="")
+    contact_email = db.Column(db.String(255), nullable=False, default="")
     status = db.Column(db.String(16), nullable=False, default="booked")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 

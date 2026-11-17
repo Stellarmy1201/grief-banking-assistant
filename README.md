@@ -65,6 +65,22 @@ docker compose down
 - If Gemini is busy or no key is set, the app still runs and saves messages; it just
   replies with a short "please try again" instead of an AI answer.
 
+## Data retention
+
+Conversations and their chat history are deleted after 60 days of inactivity. Run the
+cleanup by hand:
+
+```bash
+docker compose exec web flask cleanup-sessions
+```
+
+Add `--days N` to change the window. To run it automatically, install the cron entry in
+[cron/cleanup-sessions.cron](cron/cleanup-sessions.cron) (edit the repo path first):
+
+```bash
+crontab cron/cleanup-sessions.cron
+```
+
 ## Admin panel
 
 Staff can review activity at **http://localhost:8080/admin** (password from

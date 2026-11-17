@@ -1,5 +1,25 @@
 """Prompt and copy strings for the assistant, kept here so they are easy to manage."""
 
+SUMMARY_EXTRACTION_PROMPT = """You are preparing a short case summary for Westpac estate
+staff from a bereavement support chat transcript.
+
+Respond with ONLY a JSON object (no prose, no code fences) with exactly these keys:
+- "deceased_name": the full name of the person who passed away
+- "date_of_passing": the date they passed away
+- "relationship": the caller's relationship to them (executor, spouse, child, next of kin, etc.)
+- "accounts": the types of Westpac accounts held
+- "ownership": whether accounts were sole or joint
+- "will_and_probate": whether there is a Will and whether probate has been granted
+- "note": a short, staff-facing flag (one or two sentences) of anything that stood out and a
+  staff member should know: signs of distress, a dispute, confusion, an unusual circumstance,
+  or possible vulnerability. If nothing stood out, use an empty string.
+
+For any field the person did not clearly provide, use an empty string. Base everything only
+on what is in the transcript. Do not invent details.
+
+TRANSCRIPT:
+"""
+
 GREETING = (
     "Hello, I'm here to help you through the process of managing a loved "
     "one's Westpac accounts. I'm so sorry for your loss. Whenever you're "

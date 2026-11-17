@@ -95,6 +95,9 @@
         <input id="contact-phone" placeholder="Phone (optional)"
           class="border rounded-lg px-3 py-2 text-sm" />
       </div>
+      <input id="contact-email" type="email" placeholder="Email (required)" required
+        oninput="updateConfirmState()"
+        class="w-full border rounded-lg px-3 py-2 text-sm" />
 
       <p id="booking-error" class="text-sm text-red-700" style="display:none"></p>
 
@@ -236,6 +239,11 @@
     // --- Booking panel ---
     let selectedSlotId = null;
 
+    function updateConfirmState() {
+      const email = document.getElementById('contact-email').value.trim();
+      document.getElementById('confirm-booking').disabled = !(selectedSlotId && email);
+    }
+
     async function openBooking() {
       selectedSlotId = null;
       document.getElementById('booking-error').style.display = 'none';
@@ -263,7 +271,7 @@
 
     async function loadSlots() {
       selectedSlotId = null;
-      document.getElementById('confirm-booking').disabled = true;
+      updateConfirmState();
       const branchId = document.getElementById('branch-select').value;
       const list = document.getElementById('slot-list');
       if (!branchId) { list.innerHTML = 'Select a branch first.'; return; }
@@ -282,7 +290,7 @@
           selectedSlotId = s.id;
           document.querySelectorAll('.slot-btn').forEach(x => x.classList.remove('border-red-600','bg-red-50'));
           b.classList.add('border-red-600','bg-red-50');
-          document.getElementById('confirm-booking').disabled = false;
+          updateConfirmState();
         };
         list.appendChild(b);
       });
@@ -302,7 +310,8 @@
             sessionId,
             slotId: selectedSlotId,
             contactName: document.getElementById('contact-name').value,
-            contactPhone: document.getElementById('contact-phone').value
+            contactPhone: document.getElementById('contact-phone').value,
+            contactEmail: document.getElementById('contact-email').value
           })
         });
         const data = await res.json();

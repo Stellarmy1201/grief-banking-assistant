@@ -1,5 +1,8 @@
 import os
+import re
+import json
 from datetime import datetime
+import click
 from dotenv import load_dotenv
 load_dotenv()
 from flask import (Flask, request, jsonify, send_from_directory,
@@ -11,7 +14,7 @@ from google.genai import types
 from extensions import db, migrate
 import models  # noqa: F401  (import so migrations see the models' metadata)
 import services as svc
-from prompts import SYSTEM_PROMPT, GREETING
+from prompts import SYSTEM_PROMPT, GREETING, SUMMARY_EXTRACTION_PROMPT
 
 
 def _database_uri():
@@ -92,6 +95,46 @@ def build_contents(history, message):
     return contents
 
 
+SUMMARY_KEYS = ['deceased_name', 'date_of_passing', 'relationship',
+                'accounts', 'ownership', 'will_and_probate', 'note']
+
+
+def build_summary(history):
+    """Extract a structured case summary (+ staff note) from the transcript.
+
+    Returns a dict with SUMMARY_KEYS plus generated_at. Never raises: on any
+    failure it returns a summary whose note explains the problem.
+    """
+    base = {k: '' for k in SUMMARY_KEYS}
+    base['generated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+    if client is None:
+        base['note'] = 'Summary unavailable: AI is offline (no GEMINI_API_KEY).'
+        return base
+
+    transcript = '\n'.join(
+        f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+        for m in history
+    )
+    try:
+        resp = client.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=SUMMARY_EXTRACTION_PROMPT + transcript,
+        )
+        text = resp.text or ''
+        # Pull the first {...} object out, even if wrapped in ``` fences or prose.
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        data = json.loads(match.group(0)) if match else None
+        if isinstance(data, dict):
+            for k in SUMMARY_KEYS:
+                v = data.get(k, '')
+                base[k] = v.strip() if isinstance(v, str) else str(v)
+        else:
+            base['note'] = 'Could not read the summary. Please try again.'
+    except Exception:
+        base['note'] = 'Could not generate a summary right now. Please try again.'
+    return base
+
+
 @app.route('/chat', methods=['POST'])
 def chat():
     data = request.json or {}
@@ -139,19 +182,32 @@ def branch_slots(branch_id):
     return jsonify(svc.list_available_slots(branch_id))
 
 
+def _looks_like_email(value):
+    """Very light email sanity check: one @ with a dotted domain after it."""
+    if value.count('@') != 1:
+        return False
+    local, _, domain = value.partition('@')
+    return bool(local) and '.' in domain and not domain.startswith('.') and not domain.endswith('.')
+
+
 @app.route('/appointments', methods=['POST'])
 def create_appointment():
     data = request.json or {}
     code = (data.get('sessionId') or '').strip()
     slot_id = data.get('slotId')
+    email = (data.get('contactEmail') or '').strip()
     if not code:
         return jsonify({'error': 'missing sessionId'}), 400
     if not slot_id:
         return jsonify({'error': 'missing slotId'}), 400
+    if not email:
+        return jsonify({'error': 'An email address is required to book.'}), 400
+    if not _looks_like_email(email):
+        return jsonify({'error': 'That email address does not look right.'}), 400
 
     svc.ensure_session(code)
     appt = svc.book_appointment(
-        code, slot_id, data.get('contactName'), data.get('contactPhone')
+        code, slot_id, data.get('contactName'), data.get('contactPhone'), email
     )
     if appt is None:
         return jsonify({'error': 'That time was just taken. Please pick another.'}), 409
@@ -197,13 +253,25 @@ def admin_dashboard():
 
 @app.route('/admin/conversations/<code>')
 def admin_conversation(code):
+    session = svc.get_session(code)
+    summary = session['collected'] if session and session['collected'] else None
     return render_template(
         'admin/dashboard.html',
         sessions=svc.list_sessions(),
         appointments=svc.list_appointments(),
         branches=svc.list_branches_with_slots(),
-        conversation={'code': code, 'history': svc.get_history(code)},
+        conversation={'code': code, 'history': svc.get_history(code), 'summary': summary},
     )
+
+
+@app.route('/admin/conversations/<code>/summarize', methods=['POST'])
+def admin_summarize(code):
+    if svc.get_session(code) is None:
+        flash('That conversation no longer exists.')
+        return redirect(url_for('admin_dashboard'))
+    summary = build_summary(svc.get_history(code))
+    svc.update_collected(code, summary)
+    return redirect(url_for('admin_conversation', code=code))
 
 
 @app.route('/admin/branches', methods=['POST'])
@@ -255,6 +323,20 @@ def admin_delete_slot(slot_id):
 def admin_cancel_appointment(appt_id):
     svc.cancel_appointment(appt_id)
     return redirect(url_for('admin_dashboard'))
+
+
+# --- CLI: data retention ------------------------------------------------------
+
+@app.cli.command('cleanup-sessions')
+@click.option('--days', default=60, show_default=True,
+              help='Delete conversations inactive for more than this many days.')
+def cleanup_sessions(days):
+    """Delete old sessions, their chat history and bookings (run from cron)."""
+    counts = svc.delete_old_sessions(days)
+    click.echo(
+        f"Removed {counts['sessions']} session(s), {counts['messages']} message(s), "
+        f"{counts['appointments']} appointment(s) older than {days} days."
+    )
 
 
 if __name__ == '__main__':

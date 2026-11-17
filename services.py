@@ -107,6 +107,7 @@ def _appointment_dict(appt):
         "label": _slot_label(slot.start_time) if slot else None,
         "contact_name": appt.contact_name,
         "contact_phone": appt.contact_phone,
+        "contact_email": appt.contact_email,
         "status": appt.status,
     }
 
@@ -133,7 +134,7 @@ def list_available_slots(branch_id):
     ]
 
 
-def book_appointment(session_code, slot_id, contact_name, contact_phone):
+def book_appointment(session_code, slot_id, contact_name, contact_phone, contact_email=""):
     """Atomically claim a free slot and create the appointment.
 
     Returns the appointment dict, or None if the slot is already taken/missing.
@@ -151,6 +152,7 @@ def book_appointment(session_code, slot_id, contact_name, contact_phone):
         slot_id=slot_id,
         contact_name=(contact_name or "").strip(),
         contact_phone=(contact_phone or "").strip(),
+        contact_email=(contact_email or "").strip(),
         status="booked",
     )
     db.session.add(appt)
@@ -292,3 +294,39 @@ def seed_demo_data():
                 start = (base + timedelta(days=day)).replace(hour=hour)
                 db.session.add(AppointmentSlot(branch_id=b.id, start_time=start))
     db.session.commit()
+
+
+def delete_old_sessions(days=60):
+    """Delete sessions inactive for more than `days`, with their chat and bookings.
+
+    Removal order respects the foreign keys: free the slots of those sessions'
+    appointments, delete the appointments, delete the messages, then the sessions.
+    Returns a counts dict.
+    """
+    cutoff = _now_naive() - timedelta(days=days)
+    old_codes = db.session.scalars(
+        db.select(Session.code).where(Session.updated_at < cutoff)
+    ).all()
+    if not old_codes:
+        return {"sessions": 0, "messages": 0, "appointments": 0}
+
+    appt_slot_ids = db.session.scalars(
+        db.select(Appointment.slot_id).where(Appointment.session_code.in_(old_codes))
+    ).all()
+    if appt_slot_ids:
+        db.session.execute(
+            db.update(AppointmentSlot)
+            .where(AppointmentSlot.id.in_(appt_slot_ids))
+            .values(is_booked=False)
+        )
+    appts = db.session.execute(
+        db.delete(Appointment).where(Appointment.session_code.in_(old_codes))
+    ).rowcount
+    msgs = db.session.execute(
+        db.delete(Message).where(Message.session_code.in_(old_codes))
+    ).rowcount
+    sessions = db.session.execute(
+        db.delete(Session).where(Session.code.in_(old_codes))
+    ).rowcount
+    db.session.commit()
+    return {"sessions": sessions, "messages": msgs, "appointments": appts}

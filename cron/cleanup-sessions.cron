@@ -1,0 +1,17 @@
+# Grief Banking Assistant - data retention cron
+#
+# Deletes conversations (and their chat history and bookings) that have been
+# inactive for more than 60 days, so personal details do not pile up.
+#
+# Install on the machine that runs docker compose:
+#   1. Edit the path below to point at your checkout of this repo.
+#   2. Load it:  crontab cron/cleanup-sessions.cron
+#      (or append this line to your existing crontab with: crontab -e)
+#
+# Runs every day at 03:00. Adjust --days to change the retention window.
+#
+# cron runs with a minimal PATH, so either make sure `docker` is on PATH or
+# replace `docker` below with its full path (macOS: /usr/local/bin/docker,
+# many Linux hosts: /usr/bin/docker; check with `which docker`).
+
+0 3 * * * cd /path/to/grief-banking-assistant && docker compose exec -T web flask cleanup-sessions --days 60 >> /tmp/grief-cleanup.log 2>&1
