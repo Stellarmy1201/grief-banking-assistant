@@ -72,8 +72,15 @@ def resume_session(code):
 
 def build_contents(history, message):
     """Build Gemini's role-structured contents from stored history + new message."""
+    today = datetime.now().strftime('%A, %d %B %Y')
+    system_text = (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"TODAY'S DATE IS {today}. Use this as 'now' when checking dates. "
+        "A date on or before today is in the past and is fine; only a date after "
+        "today is in the future. A death a few days or weeks ago is normal."
+    )
     contents = [
-        {'role': 'user', 'parts': [{'text': SYSTEM_PROMPT}]},
+        {'role': 'user', 'parts': [{'text': system_text}]},
         {'role': 'model', 'parts': [{'text': 'Understood. I will follow these guidelines.'}]},
     ]
     for m in history:
